@@ -22,14 +22,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: |
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.2.app
-          else
-            echo "Xcode_16.2.app not found; using runner default:"
-          fi
-          xcodebuild -version
+      # Use the runner's default Xcode: pinning an older Xcode (e.g. 16.2) fails in
+      # CompileAssetCatalog because actool needs a simulator runtime matching its
+      # SDK, and the runner image only ships runtimes for its default Xcode.
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
