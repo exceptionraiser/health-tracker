@@ -54,7 +54,7 @@ extension View {
             .overlay(Rectangle().stroke(Theme.ink, lineWidth: 1.5))
             .background(alignment: .center) {
                 Rectangle()
-                    .fill(Theme.ink)
+                    .fill(Theme.line)
                     .offset(x: 3, y: 3)
             }
             .padding(.trailing, 3)

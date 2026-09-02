@@ -7,8 +7,13 @@ struct ProgressTabView: View {
     var body: some View {
         VStack(spacing: 16) {
             StatRow()
+            AdherenceCard()
+            if store.isStalled {
+                PlateauCard()
+            }
             ChartCard()
             MilestonesCard()
+            WaistCard()
             RecentEntriesCard()
         }
     }
@@ -56,6 +61,58 @@ private struct StatBox: View {
     }
 }
 
+// MARK: - Adherence
+
+private struct AdherenceCard: View {
+    @EnvironmentObject var store: Store
+
+    private var streakText: String {
+        let streak = store.currentStreak
+        return streak == 1 ? "1 day" : "\(streak) days"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("THIS WEEK")
+                .font(.mono(11, weight: .bold))
+                .foregroundColor(Theme.red)
+            HStack(spacing: 10) {
+                StatBox(title: "SHEETS DONE", value: "\(store.thisWeekCompleted)/7")
+                StatBox(title: "STREAK", value: streakText)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+}
+
+// MARK: - Plateau
+
+private struct PlateauCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("PLATEAU CHECK")
+                .font(.mono(11, weight: .bold))
+                .foregroundColor(Theme.red)
+            Text(PlanContent.plateauMessage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Theme.ink)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card)
+        .overlay(Rectangle().stroke(Theme.red, lineWidth: 2))
+        .background(alignment: .center) {
+            Rectangle()
+                .fill(Theme.line)
+                .offset(x: 3, y: 3)
+        }
+        .padding(.trailing, 3)
+        .padding(.bottom, 3)
+    }
+}
+
 // MARK: - Chart
 
 private struct ChartCard: View {
@@ -90,48 +147,62 @@ private struct ChartCard: View {
             )
     }
 
+    /// Data range padded by 2 lb, always including the next target line.
     private var yDomain: ClosedRange<Double> {
-        let points = store.chartPoints
+        let target = store.nextTarget
         var values: [Double] = []
-        for p in points {
+        for p in store.chartPoints {
             values.append(p.weight)
             values.append(p.average)
         }
-        guard let lo = values.min(), let hi = values.max() else {
-            return 190...240
-        }
-        return (lo - 3)...(hi + 3)
+        let dataMin = values.min() ?? target
+        let dataMax = values.max() ?? target
+        let lo = min(dataMin, target) - 2
+        let hi = max(dataMax, target) + 2
+        return lo...hi
+    }
+
+    private var targetLabel: String {
+        String(format: "%.0f", store.nextTarget)
     }
 
     private var weightChart: some View {
         Chart {
             ForEach(store.chartPoints) { point in
                 PointMark(
-                    x: .value("Date", point.label),
+                    x: .value("Date", point.date),
                     y: .value("Weight", point.weight)
                 )
                 .foregroundStyle(Theme.sub.opacity(0.55))
                 .symbolSize(30)
 
                 LineMark(
-                    x: .value("Date", point.label),
+                    x: .value("Date", point.date),
                     y: .value("Average", point.average)
                 )
                 .foregroundStyle(Theme.ink)
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
                 .interpolationMethod(.monotone)
             }
-            RuleMark(y: .value("Goal", Store.goalWeight))
+            RuleMark(y: .value("Target", store.nextTarget))
                 .foregroundStyle(Theme.red)
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 4]))
                 .annotation(position: .top, alignment: .trailing) {
-                    Text("199")
+                    Text(targetLabel)
                         .font(.mono(10, weight: .bold))
                         .foregroundColor(Theme.red)
                 }
         }
         .chartYScale(domain: yDomain)
-        .chartXAxis(.hidden)
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                AxisGridLine()
+                    .foregroundStyle(Theme.line)
+                AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: false)
+                    .font(.mono(9))
+                    .foregroundStyle(Theme.sub)
+            }
+        }
         .frame(height: 220)
     }
 }
@@ -195,6 +266,117 @@ private struct MilestoneChip: View {
         .overlay(
             Rectangle().stroke(hit ? Theme.green : Theme.ink, lineWidth: 1.5)
         )
+    }
+}
+
+// MARK: - Waist
+
+private struct WaistCard: View {
+    @EnvironmentObject var store: Store
+    @State private var waistText: String = ""
+    @State private var errorText: String? = nil
+    @FocusState private var waistFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WAIST")
+                .font(.mono(11, weight: .bold))
+                .foregroundColor(Theme.red)
+            summaryRow
+            inputRow
+            if let error = errorText {
+                Text(error)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Theme.red)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+        .onChange(of: waistText) { _ in
+            errorText = nil
+        }
+    }
+
+    @ViewBuilder
+    private var summaryRow: some View {
+        if let latest = store.latestWaist {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(String(format: "%.1f", latest))
+                    .font(.mono(24, weight: .bold))
+                    .foregroundColor(Theme.ink)
+                Text("in")
+                    .font(.system(size: 14))
+                    .foregroundColor(Theme.sub)
+                Spacer()
+                Text(changeText)
+                    .font(.mono(12, weight: .bold))
+                    .foregroundColor(changeColor)
+            }
+        } else {
+            Text("Measure at the navel, relaxed, same time as the weigh-in.")
+                .font(.system(size: 13))
+                .foregroundColor(Theme.sub)
+        }
+    }
+
+    private var changeText: String {
+        guard let change = store.waistChange else { return "first entry" }
+        if abs(change) < 0.05 {
+            return "no change since start"
+        }
+        let sign = change < 0 ? "\u{2212}" : "+"
+        return "\(sign)\(String(format: "%.1f", abs(change))) in since start"
+    }
+
+    private var changeColor: Color {
+        guard let change = store.waistChange, change < -0.05 else { return Theme.sub }
+        return Theme.green
+    }
+
+    private var inputRow: some View {
+        HStack(spacing: 8) {
+            TextField("inches, e.g. 42.5", text: $waistText)
+                .keyboardType(.decimalPad)
+                .focused($waistFocused)
+                .font(.mono(14))
+                .foregroundColor(Theme.ink)
+                .padding(8)
+                .background(Theme.paper)
+                .overlay(Rectangle().stroke(Theme.ink, lineWidth: 1.5))
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") {
+                            waistFocused = false
+                        }
+                    }
+                }
+            Button(action: logWaist) {
+                Text("LOG")
+                    .font(.system(size: 13, weight: .bold))
+                    .fontWidth(.condensed)
+                    .foregroundColor(Theme.paper)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 16)
+                    .background(Theme.ink)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func logWaist() {
+        let cleaned = waistText
+            .trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(cleaned), value >= 20, value <= 80 else {
+            errorText = "Enter a waist between 20 and 80 in."
+            return
+        }
+        store.logWaist(value, for: store.todayKey)
+        waistText = ""
+        errorText = nil
+        waistFocused = false
     }
 }
 

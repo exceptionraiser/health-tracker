@@ -2,17 +2,30 @@ import SwiftUI
 
 struct PlanView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var reminders: ReminderManager
     @State private var showResetConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            targetsSection
-            workoutSection(title: "Workout A", exercises: PlanContent.workoutA)
-            workoutSection(title: "Workout B", exercises: PlanContent.workoutB)
-            scheduleSection
-            jointRulesSection
-            progressionSection
-            resetSection
+            Group {
+                targetsSection
+                workoutSection(title: "Workout A", exercises: PlanContent.workoutA)
+                workoutSection(title: "Workout B", exercises: PlanContent.workoutB)
+                scheduleSection
+                warmUpSection
+                mobilitySection
+                cardioSection
+                functionalSection
+            }
+            Group {
+                dietSection
+                trackingSection
+                jointRulesSection
+                progressionSection
+                reminderSection
+                exportSection
+                resetSection
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -54,6 +67,55 @@ struct PlanView: View {
         }
     }
 
+    private var warmUpSection: some View {
+        PlanSection(title: "Warm-up (every strength session)") {
+            NumberedList(items: PlanContent.warmUp)
+        }
+    }
+
+    private var mobilitySection: some View {
+        PlanSection(title: "Mobility routine (10 min)") {
+            VStack(alignment: .leading, spacing: 10) {
+                NumberedList(items: PlanContent.mobility)
+                Text(PlanContent.balance)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Theme.ink)
+            }
+        }
+    }
+
+    private var cardioSection: some View {
+        PlanSection(title: "Cardio rules") {
+            BulletList(items: PlanContent.cardioRules)
+        }
+    }
+
+    private var functionalSection: some View {
+        PlanSection(title: "Saturday functional block") {
+            NumberedList(items: PlanContent.functionalBlock)
+        }
+    }
+
+    private var dietSection: some View {
+        PlanSection(title: "Diet") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(PlanContent.dietPlate)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Theme.ink)
+                SubheadText("Sample day")
+                MealList(items: PlanContent.sampleDay)
+                SubheadText("Non-negotiables")
+                BulletList(items: PlanContent.nonNegotiables)
+            }
+        }
+    }
+
+    private var trackingSection: some View {
+        PlanSection(title: "Tracking & adjustments") {
+            BulletList(items: PlanContent.trackingRules)
+        }
+    }
+
     private var jointRulesSection: some View {
         PlanSection(title: "Joint rules") {
             BulletList(items: PlanContent.jointRules)
@@ -65,6 +127,58 @@ struct PlanView: View {
             Text(PlanContent.progressionRule)
                 .font(.system(size: 14))
                 .foregroundColor(Theme.ink)
+        }
+    }
+
+    // MARK: - Reminder
+
+    private var reminderSection: some View {
+        PlanSection(title: "Reminder") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: $reminders.enabled) {
+                    Text("Daily weigh-in reminder")
+                        .font(.system(size: 14))
+                        .foregroundColor(Theme.ink)
+                }
+                .tint(Theme.ink)
+                if reminders.enabled {
+                    DatePicker(
+                        "Time",
+                        selection: $reminders.time,
+                        displayedComponents: .hourAndMinute
+                    )
+                    .font(.system(size: 14))
+                    .foregroundColor(Theme.ink)
+                    .tint(Theme.ink)
+                }
+            }
+            .onChange(of: reminders.enabled) { _ in
+                reminders.apply()
+            }
+            .onChange(of: reminders.time) { _ in
+                reminders.apply()
+            }
+        }
+    }
+
+    // MARK: - Export
+
+    private var exportSection: some View {
+        PlanSection(title: "Export") {
+            VStack(alignment: .leading, spacing: 10) {
+                if let url = store.exportCSV() {
+                    ShareLink(item: url) {
+                        OutlinedLabel(text: "Export weights (CSV)")
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let url = store.exportJSON() {
+                    ShareLink(item: url) {
+                        OutlinedLabel(text: "Full backup (JSON)")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 
@@ -149,6 +263,37 @@ private struct PlanSection<Content: View>: View {
     }
 }
 
+/// Small red mono subheading inside a section.
+private struct SubheadText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.mono(11, weight: .bold))
+            .foregroundColor(Theme.red)
+            .padding(.top, 2)
+    }
+}
+
+/// Full-width outlined button label, matching the app's secondary buttons.
+private struct OutlinedLabel: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14, weight: .bold))
+            .foregroundColor(Theme.ink)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .overlay(Rectangle().stroke(Theme.ink, lineWidth: 1.5))
+            .contentShape(Rectangle())
+    }
+}
+
 private struct BulletList: View {
     let items: [String]
 
@@ -180,6 +325,26 @@ private struct NumberedList: View {
                         .foregroundColor(Theme.red)
                         .frame(width: 22, alignment: .trailing)
                     Text(items[index])
+                        .font(.system(size: 14))
+                        .foregroundColor(Theme.ink)
+                }
+            }
+        }
+    }
+}
+
+private struct MealList: View {
+    let items: [MealRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(items) { row in
+                HStack(alignment: .top, spacing: 8) {
+                    Text(row.meal.uppercased())
+                        .font(.mono(12, weight: .bold))
+                        .foregroundColor(Theme.red)
+                        .frame(width: 84, alignment: .leading)
+                    Text("\u{2014} \(row.example)")
                         .font(.system(size: 14))
                         .foregroundColor(Theme.ink)
                 }

@@ -8,18 +8,32 @@ enum AppTab: String, CaseIterable {
 
 struct ContentView: View {
     @EnvironmentObject var store: Store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .today
 
     var body: some View {
+        NavigationStack {
+            mainColumn
+                .background(Theme.paper.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                store.refreshToday()
+            }
+        }
+    }
+
+    private var mainColumn: some View {
         VStack(spacing: 0) {
             HeaderView()
             ScrollView {
                 tabContent
                     .padding(16)
             }
+            .scrollDismissesKeyboard(.interactively)
             TabBarView(selection: $selectedTab)
         }
-        .background(Theme.paper.ignoresSafeArea())
     }
 
     @ViewBuilder
@@ -71,17 +85,17 @@ struct TabBarView: View {
     @Binding var selection: AppTab
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(AppTab.allCases, id: \.self) { tab in
-                tabButton(tab)
-            }
-        }
-        .background(Theme.card)
-        .overlay(alignment: .top) {
+        VStack(spacing: 0) {
             Rectangle()
                 .fill(Theme.ink)
                 .frame(height: 2)
+            HStack(spacing: 0) {
+                ForEach(AppTab.allCases, id: \.self) { tab in
+                    tabButton(tab)
+                }
+            }
         }
+        .background(Theme.card.ignoresSafeArea(edges: .bottom))
     }
 
     private func tabButton(_ tab: AppTab) -> some View {
