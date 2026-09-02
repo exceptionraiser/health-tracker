@@ -1,0 +1,139 @@
+name: TestFlight
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Check App Store Connect secrets
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - name: Check required secrets
+        id: check
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${APPLE_TEAM_ID}" ]   || missing+=("APPLE_TEAM_ID")
+          [ -n "${ASC_KEY_ID}" ]      || missing+=("ASC_KEY_ID")
+          [ -n "${ASC_ISSUER_ID}" ]   || missing+=("ASC_ISSUER_ID")
+          [ -n "${ASC_API_KEY_P8}" ]  || missing+=("ASC_API_KEY_P8")
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All App Store Connect secrets are present."
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=TestFlight upload skipped::Missing repository secret(s): ${missing[*]}. Add them under Settings > Secrets and variables > Actions, then re-run this workflow. See the TestFlight section of README.md for setup steps."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  upload:
+    name: Archive and upload to TestFlight
+    runs-on: macos-15
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Use the runner's default Xcode (see build-ios.yml for why pinning fails).
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec TrainingLog/project.yml --project TrainingLog
+
+      - name: Install App Store Connect API key
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/private_keys"
+          KEY_PATH="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s' "$ASC_API_KEY_P8" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          if [ ! -s "$KEY_PATH" ]; then
+            echo "ERROR: decoded API key is empty — is ASC_API_KEY_P8 base64-encoded?" >&2
+            exit 1
+          fi
+          echo "KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive (cloud-managed automatic signing)
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project TrainingLog/TrainingLog.xcodeproj \
+            -scheme TrainingLog \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/TrainingLog.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}"
+
+      - name: Write ExportOptions.plist
+        run: |
+          set -euo pipefail
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>upload</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint ExportOptions.plist
+
+      - name: Export and upload to App Store Connect
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath build/TrainingLog.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Upload export logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-export-logs
+          path: build/export
+          if-no-files-found: ignore
